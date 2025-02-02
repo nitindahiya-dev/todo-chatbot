@@ -6,10 +6,12 @@ import { todoTable } from "./db/schema.js";
 import { ilike, eq } from "drizzle-orm";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-
 // Initialize Express
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: process.env.CLIENT_URL || "http://localhost:3000", // Allow requests from your frontend
+  credentials: true
+}));
 app.use(express.json());
 
 // Initialize Gemini AI
@@ -43,7 +45,6 @@ You are a Todo List Assistant. Follow these rules strictly:
 // Helper function to parse AI response
 function parseAIResponse(text) {
   try {
-    // Match the first JSON object in the response text
     const match = text.match(/{[\s\S]*}/);
     if (!match) throw new Error("No JSON object found");
     return JSON.parse(match[0]);
@@ -62,18 +63,16 @@ app.post("/api/chat", async (req, res) => {
     const chat = await model.generateContent({
       contents: [{
         role: "user",
-        parts: [{ text: `${SYSTEM_PROMPT}\nUser: ${message}` }]
+        parts: [{ text: `${SYSTEM_PROMPT}\n:User  ${message}` }]
       }]
     });
     
-    // Await full text response and log for debugging
     const responseText = await chat.response.text();
     console.log("Raw AI Response:", responseText);
     
     const aiResponse = parseAIResponse(responseText);
     console.log("Parsed AI Response:", aiResponse);
     
-    // Handle actions from the AI
     if (aiResponse.type === "action") {
       switch (aiResponse.function) {
         case "create": {
@@ -85,20 +84,16 @@ app.post("/api/chat", async (req, res) => {
           if (!todos.length) {
             return res.json({ message: "You have no todos.", todos: [] });
           }
-          // Format the todos to show only the text
           const formattedTodos = todos.map(todo => todo.todo).join(", ");
           return res.json({ message: formattedTodos, todos });
         }
         case "delete": {
-          // Allow deletion of "all" todos if the input is "all"
           if (aiResponse.input.toLowerCase() === "all") {
             await database.deleteAll();
             return res.json({ message: "All todos deleted" });
           }
-          // Try to parse the input as an id (number)
           let id = parseInt(aiResponse.input);
           if (isNaN(id)) {
-            // If input is not numeric, search for matching todo(s)
             const results = await database.search(aiResponse.input);
             if (results.length === 1) {
               id = results[0].id;
@@ -124,7 +119,6 @@ app.post("/api/chat", async (req, res) => {
       }
     }
     
-    // If no valid action was found, return a default message
     res.json({ message: aiResponse.message || "Hi, I am Todo chatbot, Available actions: create, delete and search." });
     
   } catch (error) {
@@ -133,7 +127,7 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// New endpoint to fetch all todos (for the table below chat)
+// New endpoint to fetch all todos
 app.get("/api/todos", async (req, res) => {
   try {
     const todos = await database.getAll();
@@ -143,10 +137,5 @@ app.get("/api/todos", async (req, res) => {
   }
 });
 
-console.log("Gemini API Key:", process.env.GEMINI_API_KEY);
-
-// Start the server
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// Export the Express app for Vercel serverless functions
+export default app;
